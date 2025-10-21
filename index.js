@@ -2,6 +2,34 @@ if ("serviceWorker" in navigator) {
 	navigator.serviceWorker.register("./sw.js");
 }
 
+// Utility function for debouncing
+function debounce(func, wait) {
+	let timeout;
+	return function executedFunction(...args) {
+		const later = () => {
+			clearTimeout(timeout);
+			func(...args);
+		};
+		clearTimeout(timeout);
+		timeout = setTimeout(later, wait);
+	};
+}
+
+// Constants
+const TIMER_LIMITS = {
+	MIN_MINUTES: 1,
+	MAX_MINUTES: 180,
+	MIN_ROUNDS: 1,
+	MAX_ROUNDS: 18,
+	SECONDS_PER_MINUTE: 60
+};
+
+const CANVAS_SIZE = 400;
+const PIP_CANVAS_RADIUS = 180;
+const PIP_FONT_SIZE_LARGE = "80px monospace";
+const PIP_FONT_SIZE_SMALL = "32px monospace";
+const DEBOUNCE_DELAY = 300;
+
 let timerWorker = new Worker("./worker.js");
 
 let root = document.documentElement;
@@ -326,11 +354,15 @@ function initNoise() {
 	noiseSource.buffer = buffer;
 
 	gain = audioCtx.createGain();
-	gain.gain = volume / 100;
+	gain.gain.value = volume / 100;
 
 	noiseSource.connect(gain);
 	gain.connect(audioCtx.destination);
 }
+
+const saveVolumeDebounced = debounce((vol) => {
+	localStorage.setItem("pomo-audio-volume", vol);
+}, 300);
 
 volumeSlider.addEventListener("input", () => {
 	volume = parseFloat(volumeSlider.value);
@@ -341,7 +373,7 @@ volumeSlider.addEventListener("input", () => {
 		volumeContainer.classList.remove("muted");
 	}
 	if (gain) gain.gain.linearRampToValueAtTime(volume / 100, audioCtx.currentTime);
-	localStorage.setItem("pomo-audio-volume", volume);
+	saveVolumeDebounced(volume);
 });
 
 function playNoise() {
@@ -509,7 +541,7 @@ function loadTasks() {
 	if (localStorage.getItem("pomo-stat-period")) {
 		statTimeSelect.value = localStorage.getItem("pomo-stat-period");
 	}
-	return new Promise((resolve) => {
+	return new Promise((resolve, reject) => {
 		let tr = indexedDB.open("pomo-db", 1);
 		tr.onupgradeneeded = (ev) => {
 			db = ev.target.result;
@@ -522,6 +554,10 @@ function loadTasks() {
 		tr.onsuccess = (ev) => {
 			db = ev.target.result;
 			resolve();
+		};
+		tr.onerror = (ev) => {
+			console.error("Error opening IndexedDB:", ev.target.error);
+			reject(ev.target.error);
 		};
 	});
 }
@@ -557,6 +593,7 @@ async function getRecords(time) {
 function saveRecord(r) {
 	let tr = db.transaction("records", "readwrite").objectStore("records").add(r);
 	tr.onsuccess = () => console.log("Added new record!");
+	tr.onerror = (e) => console.error("Error saving record:", e.target.error);
 }
 
 function deleteRecords(task) {
@@ -892,7 +929,7 @@ function roundEntryGen(entry) {
 
 let hourlyNames = ["0-6", "6-12", "12-18", "18-24"];
 
-let hourlyFullNames = ["00:00 - 00:06", "06:00 - 12:00", "12:00 - 18:00", "18:00 - 24:00"];
+let hourlyFullNames = ["00:00 - 06:00", "06:00 - 12:00", "12:00 - 18:00", "18:00 - 24:00"];
 
 let hourlyBars = hourlyNames.map((d) => document.getElementById("hourly-" + d));
 
@@ -1061,7 +1098,7 @@ async function loadStatistics(updateEntryCards = true) {
 				);
 			}
 			let title = document.createElementNS("http://www.w3.org/2000/svg", "title");
-			title.innerHTML = `${chart.task} ${((chart.t / (totalValue === 0 ? 1 : totalValue)) * 100).toFixed(2)}%`;
+			title.textContent = `${chart.task} ${((chart.t / (totalValue === 0 ? 1 : totalValue)) * 100).toFixed(2)}%`;
 			pie.appendChild(title);
 			pie.dataset.normal = normal;
 			pie.dataset.task = chart.task;
@@ -1452,30 +1489,32 @@ timerInputs.long.value = config.long / 60;
 timerInputs.rounds.value = config.longGap;
 
 function timerInput(name, value) {
-	if (value > 180) {
-		config[name] = 10800;
-		timerInputs[name].value = 180;
-	} else if (value < 1) {
-		config[name] = 60;
-		timerInputs[name].value = 1;
+	if (value > TIMER_LIMITS.MAX_MINUTES) {
+		config[name] = TIMER_LIMITS.MAX_MINUTES * TIMER_LIMITS.SECONDS_PER_MINUTE;
+		timerInputs[name].value = TIMER_LIMITS.MAX_MINUTES;
+	} else if (value < TIMER_LIMITS.MIN_MINUTES) {
+		config[name] = TIMER_LIMITS.MIN_MINUTES * TIMER_LIMITS.SECONDS_PER_MINUTE;
+		timerInputs[name].value = TIMER_LIMITS.MIN_MINUTES;
 	} else {
-		config[name] = value * 60;
+		config[name] = value * TIMER_LIMITS.SECONDS_PER_MINUTE;
 	}
 	saveConfig();
 }
 
 function incrementTimer(name) {
-	if (config[name] < 10800) {
-		config[name] += 60;
-		timerInputs[name].value = config[name] / 60;
+	const maxSeconds = TIMER_LIMITS.MAX_MINUTES * TIMER_LIMITS.SECONDS_PER_MINUTE;
+	if (config[name] < maxSeconds) {
+		config[name] += TIMER_LIMITS.SECONDS_PER_MINUTE;
+		timerInputs[name].value = config[name] / TIMER_LIMITS.SECONDS_PER_MINUTE;
 	}
 	saveConfig();
 }
 
 function decrementTimer(name) {
-	if (config[name] > 60) {
-		config[name] -= 60;
-		timerInputs[name].value = config[name] / 60;
+	const minSeconds = TIMER_LIMITS.MIN_MINUTES * TIMER_LIMITS.SECONDS_PER_MINUTE;
+	if (config[name] > minSeconds) {
+		config[name] -= TIMER_LIMITS.SECONDS_PER_MINUTE;
+		timerInputs[name].value = config[name] / TIMER_LIMITS.SECONDS_PER_MINUTE;
 	}
 	saveConfig();
 }
@@ -1490,12 +1529,12 @@ timerInputs.long.addEventListener("input", function () {
 	timerInput("long", this.value);
 });
 timerInputs.rounds.addEventListener("input", function () {
-	if (this.value > 18) {
-		config.longGap = 18;
-		this.value = 18;
-	} else if (this.value < 1) {
-		config.longGap = 1;
-		this.value = 1;
+	if (this.value > TIMER_LIMITS.MAX_ROUNDS) {
+		config.longGap = TIMER_LIMITS.MAX_ROUNDS;
+		this.value = TIMER_LIMITS.MAX_ROUNDS;
+	} else if (this.value < TIMER_LIMITS.MIN_ROUNDS) {
+		config.longGap = TIMER_LIMITS.MIN_ROUNDS;
+		this.value = TIMER_LIMITS.MIN_ROUNDS;
 	} else {
 		config.longGap = parseInt(this.value);
 	}
@@ -1511,14 +1550,14 @@ document.getElementById("short-dec").addEventListener("click", () => decrementTi
 document.getElementById("long-dec").addEventListener("click", () => decrementTimer("long"));
 
 document.getElementById("rounds-inc").addEventListener("click", () => {
-	config.longGap = config.longGap < 18 ? config.longGap + 1 : 18;
+	config.longGap = config.longGap < TIMER_LIMITS.MAX_ROUNDS ? config.longGap + 1 : TIMER_LIMITS.MAX_ROUNDS;
 	timerInputs.rounds.value = config.longGap;
 	roundnoDiv.innerText = roundInfo.focusNum + "/" + config.longGap;
 	saveConfig();
 });
 
 document.getElementById("rounds-dec").addEventListener("click", () => {
-	config.longGap = config.longGap > 1 ? config.longGap - 1 : 1;
+	config.longGap = config.longGap > TIMER_LIMITS.MIN_ROUNDS ? config.longGap - 1 : TIMER_LIMITS.MIN_ROUNDS;
 	timerInputs.rounds.value = config.longGap;
 	roundnoDiv.innerText = roundInfo.focusNum + "/" + config.longGap;
 	saveConfig();
@@ -1528,7 +1567,7 @@ document.getElementById("rounds-dec").addEventListener("click", () => {
 
 //#region PIP Mode
 let canvas = document.createElement("canvas");
-canvas.width = canvas.height = 400;
+canvas.width = canvas.height = CANVAS_SIZE;
 let ctx = canvas.getContext("2d");
 
 let pipMethodSelect = document.getElementById("pip-method-select");
@@ -1560,10 +1599,10 @@ pipDoubleClickRestoreSelect.addEventListener("change", function () {
 
 function loop() {
 	ctx.fillStyle = accents[theme][themeAccent]["--bgcolor"];
-	ctx.fillRect(0, 0, 400, 400);
+	ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
 	ctx.fillStyle = accents[theme][themeAccent]["--color"];
-	ctx.font = "80px monospace";
+	ctx.font = PIP_FONT_SIZE_LARGE;
 	ctx.textAlign = "center";
 	let seconds = config[roundInfo.current] - roundInfo.t;
 	if (seconds < 0) {
@@ -1576,21 +1615,22 @@ function loop() {
 			.padStart(2, "0") +
 		":" +
 		(seconds % 60).toString().padStart(2, "0");
-	ctx.fillText(timestr, 200, 200, 280);
+	const center = CANVAS_SIZE / 2;
+	ctx.fillText(timestr, center, center, 280);
 
-	ctx.font = "32px monospace";
-	ctx.fillText(fullname[roundInfo.current].toUpperCase(), 200, 260, 280);
+	ctx.font = PIP_FONT_SIZE_SMALL;
+	ctx.fillText(fullname[roundInfo.current].toUpperCase(), center, 260, 280);
 
 	ctx.strokeStyle = accents[theme][themeAccent]["--coloraccent"];
 	ctx.lineWidth = 4;
 	ctx.beginPath();
-	ctx.arc(200, 200, 180, 0, Math.PI * 2);
+	ctx.arc(center, center, PIP_CANVAS_RADIUS, 0, Math.PI * 2);
 	ctx.stroke();
 
 	ctx.strokeStyle = themes[theme].props["--" + roundInfo.current];
 	ctx.lineWidth = 16;
 	ctx.beginPath();
-	ctx.arc(200, 200, 180, -Math.PI / 2, (1 - roundInfo.t / config[roundInfo.current]) * Math.PI * 2 - Math.PI / 2);
+	ctx.arc(center, center, PIP_CANVAS_RADIUS, -Math.PI / 2, (1 - roundInfo.t / config[roundInfo.current]) * Math.PI * 2 - Math.PI / 2);
 	ctx.stroke();
 }
 

@@ -952,12 +952,6 @@ video.pipactive {
 	}
 }
 
-@media (max-width: 1000px) {
-	#stat-details {
-		--card-width: 250px
-	}
-}
-
 @media (max-width: 800px) {
 	#stat-details {
 		--card-width: 300px

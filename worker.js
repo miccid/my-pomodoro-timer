@@ -1,24 +1,31 @@
 let intervalID;
+let startTime;
+let initialOffset;
+
 onmessage = (e) => {
 	if(e.data.type === "start") {
-		clearInterval(intervalID)
-		let t = e.data.t || 0
+		clearInterval(intervalID);
+		initialOffset = e.data.t || 0;
+		startTime = Date.now();
+
 		intervalID = setInterval(() => {
-			t++
+			const elapsed = Math.floor((Date.now() - startTime) / 1000);
+			const t = initialOffset + elapsed;
+
 			if(t > e.data.maxDuration) {
 				postMessage({
-					t:t-1,
+					t: e.data.maxDuration,
 					running: false
-				})
-				clearInterval(intervalID)
+				});
+				clearInterval(intervalID);
 			} else {
 				postMessage({
-					t:t,
+					t: t,
 					running: true
-				})
+				});
 			}
-		}, 1000)
+		}, 1000);
 	} else {
-		clearInterval(intervalID)
+		clearInterval(intervalID);
 	}
 }
